@@ -1,0 +1,213 @@
+### The purpose of this code is to extract the latitude and longitude of the geographic location from the csv file obtained from the shapefile.
+    Then the obtained coordinates are used to find the nearest street and the street orientation through the open street map. 
+    With the coordinates of the street, the headings of one location can be calculated. 
+    Then the cooridnates and the headings are used as variables to get the street view from google. ####
+
+#import modules
+import requests
+import json
+import math
+import numpy as np
+import pandas as pd
+import shutil
+import os
+
+
+# 1.Get latitude and longitude from CSV file which can be easily obtained through shapefile.
+def get_geolocation(filepath):
+    """Get coordinates infomation list from csv file,input is filepath, output are coordinates columns"""
+    data_frame = pd.read_csv("{filepath}".format(filepath=filepath), sep=",")
+    lat = data_frame["lat"]
+    lon = data_frame["lon"]
+    return lat, lon
+    
+coordinates = get_geolocation(filepath)
+coordinates_pair_list = [
+    (coordinates[0][i], coordinates[1][i]) for i in range(0, len(coordinates[0]))
+    ]
+    
+    
+# 2.Function input a pair of coordinate and return info from OSM
+def create_overpass_road_query(lat, lon):
+    """Function input a pair of coordinate and return infor from Open Street Map"""
+    return """[out:json];
+    (way(around:20,{},{})
+    [highway~"^(primary|secondary|tertiary|residential|trunk|motorway|unclassified|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|pedestrian|service|track|footway|bridleway|steps|path|road)$"]
+    ;>;);out;""".format(
+        lat, lon
+    )
+    
+# 3. Calculated the euclidean distance between two points
+def euclidean(a, b):
+    return math.sqrt((a["lat"] - b["lat"]) ** 2 + (a["lon"] - b["lon"]) ** 2)
+
+# 4.Find two points closest to x from road_points
+# returns the points and their distances from x location
+def find_two_closest_points(x, road_points):
+    result = [road_points[0], road_points[1]]
+    result_distances = [euclidean(x, road_points[0]), euclidean(x, road_points[1])]
+
+    for road_point in road_points[2:]:
+        d = euclidean(x, road_point)
+        bigger_result_idx = result_distances.index(max(result_distances))
+        if d < result_distances[bigger_result_idx]:
+            result_distances[bigger_result_idx] = d
+            result[bigger_result_idx] = road_point
+
+    return result, result_distances
+  
+  def find_closest_road_point(x, points):
+    ((a, b), distances) = find_two_closest_points({"lat": lat, "lon": lon}, points)
+    #print("closest points:")
+    #print(a, b)
+    lat_dir = b["lat"] - a["lat"]
+    lon_dir = b["lon"] - a["lon"]
+    
+    a_b_vec = np.array(
+        [lon_dir, lat_dir]
+    )  # "lon" is x-direction and "lat" is y-direction
+    a_orig_vec = np.array([lon - a["lon"], lat - a["lat"]])
+
+    proj = a_b_vec * np.dot(a_orig_vec, a_b_vec) / np.dot(a_b_vec, a_b_vec)
+    result_point = {"lat": a["lat"] + proj[1], "lon": a["lon"] + proj[0]}
+    d = euclidean(x, result_point)
+    return result_point, d
+    
+# 5.Get Heading values
+def get_closest_road_point_headings(lat, lon):
+    query = create_overpass_road_query(lat, lon)
+    print(query)
+    res = requests.post(overpass_url, query)
+    print(res.status_code)
+    print(res.reason)
+    response = res.json()
+    headings = []
+    response_nodes = {}
+    response_ways = []
+
+    for element in response["elements"]:
+        if element["type"] == "node":
+            response_nodes[element["id"]] = element
+        elif element["type"] == "way":
+            response_ways.append(element)
+
+    closest_road_point = None
+    closest_road_point_distance = None
+    closest_way = None
+
+    # Find the "way" that has a "node" closest to the given point (lat, lon)
+    for way in response_ways:
+        points = [response_nodes[id] for id in way["nodes"]]
+        (p, distance_candidate) = find_closest_road_point(
+            {"lat": lat, "lon": lon}, points
+        )
+
+        if (
+            closest_road_point_distance == None
+            or distance_candidate < closest_road_point_distance
+        ):
+            closest_road_point_distance = distance_candidate
+            closest_road_point = p
+            closest_way = way
+
+    if closest_way != None:
+        points = [response_nodes[id] for id in closest_way["nodes"]]
+        if len(points) >= 2:
+            # find 2 closest points of the road
+            ((a, b), distances) = find_two_closest_points(
+                {"lat": lat, "lon": lon}, points
+            )
+            lat_dir = b["lat"] - a["lat"]
+            lon_dir = b["lon"] - a["lon"]
+
+            first_direction = math.atan2(lon_dir, lat_dir) * 180 / math.pi
+
+            directions = [d + first_direction for d in [0, 90, 180, 270]]
+
+            headings += [
+                {
+                    "lat": closest_road_point["lat"],
+                    "lon": closest_road_point["lon"],
+                    "dir": d,
+                }
+                for d in directions
+            ]
+            print("proj", "{},{}".format(headings[0]["lat"], headings[0]["lon"]))
+    return headings
+    
+# 6. Check metadata from Google Street API
+    def get_streetview_metadata(lat, lon):
+    """get streetview metadata based on coordinates"""
+    heading = 0
+    streetview_metadata_url = "https://maps.googleapis.com/maps/api/streetview/metadata?size={}&location={},{}&key={}&heading={}&radius=50&source=outdoor".format(
+        "640x640", lat, lon, API_KEY, heading
+    )
+    print(streetview_metadata_url)
+    response = requests.get(streetview_metadata_url)
+    return response.json()
+    
+    # 7. Check existance of street view data based on given headings. if returns true, streetview was found.
+def maybe_download_streetview_images(lat, lon, headings):
+    """ check the available street view images based on given headings from four different direction at one geo location"""
+    has_streetview = True
+
+    if len(headings) == 0:
+        print("No headings found from Open Streetmap! Using defaults.")
+        headings = [{"lat": lat, "lon": lon, "dir": d} for d in [0, 90, 180, 270]]
+
+    meta_lat = headings[0]["lat"]
+    meta_lon = headings[0]["lon"]
+
+    metadata = get_streetview_metadata(meta_lat, meta_lon)
+    print(metadata)
+    print(headings)
+
+    if metadata["status"] == "OK":
+        for h_idx, h in enumerate(headings):
+            h_dir = h["dir"]
+            h_lat = h["lat"]
+            h_lon = h["lon"]
+            streetview_url = "https://maps.googleapis.com/maps/api/streetview?size={}&location={},{}&key={}&heading={}&radius=50&return_error_code=true&source=outdoor".format(
+                "640x640", h_lat, h_lon, API_KEY, h_dir
+            )
+            response = requests.get(streetview_url, stream=True)
+            name = "{}_{}_lat{}_lon{}_h{}".format(
+                group_id,
+                str(idx).zfill(3),
+                h_lat,
+                h_lon,
+                str(h_idx),
+            )
+            if response.ok:
+                with open(os.path.join(output_dir, name + ".jpg"), "wb") as out_file:
+                    shutil.copyfileobj(response.raw, out_file)
+            else:
+                # TODO: If all four headings for a location are not found, already saved images for that location should be deleted
+                print(response.reason)
+                has_streetview = False
+                break
+    else:
+        has_streetview = False
+
+    if not has_streetview:
+        with open(
+            os.path.join(output_dir, NO_STREET_IMAGES_FILENAME), "a+"
+        ) as out_file:
+            out_file.write(
+                "{},{},{},{}\n".format(group_id, str(idx).zfill(3), lat, lon)
+            )
+
+#7. acquire streeview based on heading
+for idx in range(825, 826):
+    print("--------------------")
+    coordinates_pair = coordinates_pair_list[idx]
+    lat = coordinates_pair[0]
+    lon = coordinates_pair[1]
+
+    print(coordinates_pair)
+    if lat == None or lon == None:
+        print("Missing lat or lon. Skipping.")
+        continue
+
+    headings = get_closest_road_point_headings(lat, lon)
+    maybe_download_streetview_images(lat, lon, headings)
