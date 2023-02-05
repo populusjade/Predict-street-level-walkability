@@ -1,0 +1,63 @@
+import pandas as pd
+import numpy as np 
+import matplotlib.pyplot as plt
+import os
+from sklearn.decomposition import PCA
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import plot_confusion_matrix
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report
+from sklearn import metrics
+import math
+import seaborn as sns
+
+input_dir="your file"
+
+#1.load data
+data=pd.read_csv(input_dir,index_col=0).copy()
+X=data.iloc[:,1:-1]
+y=data.iloc[:,-1]
+print("x shpae", X.shape)
+print("y shape",y.shape)
+
+#2.scaler data
+scaler=StandardScaler()
+scaler.fit_transform(X)
+
+#3.split data to train and test
+X_train,X_rest,y_train,y_rest=train_test_split(X,y,test_size=0.2,shuffle=True,random_state=42)
+X_val,X_test,y_val,y_test=train_test_split(X_rest,y_rest,test_size=0.3,shuffle=True,random_state=42)
+
+#4.model training and validation
+C=0.01
+new_lr_model=LogisticRegression(C=C)
+#**gsv_model.best_params_,penalty="l1",solver="liblinear"
+new_lr_model.fit(X_train,y_train)
+y_train_pred=new_lr_model.predict(X_train)
+y_val_pred=new_lr_model.predict(X_val)
+print("Model accuracy on training set:",metrics.accuracy_score(y_train,y_train_pred))
+print("Model accuracy on validation set:",metrics.accuracy_score(y_val,y_val_pred))
+
+print("Precision:", metrics.precision_score(y_val,y_val_pred))
+print("confusion_matrix:",confusion_matrix(y_val,y_val_pred))
+
+#5.model testing
+test_accuracy=new_lr_model.score(X_test,y_test)
+print("ParameterC",C, "Model accuracy on test set:",test_accuracy)
+
+#6. Plot result
+cf_matrix=plot_confusion_matrix(new_lr_model,X_test, y_test) 
+plt.show()
+
+coeflist=new_lr_model.coef_[0]
+feature_name_list=new_lr_model.feature_names_in_.tolist()
+
+#7. store results into csv file
+e_exp=[math.exp(coef) for coef in coeflist]
+p_value=[math.exp(coef)/(1+math.exp(coef)) for coef in coeflist]
+    #e_exp_feature_dict=dict(zip(featurelist,e_exp))
+df_new=pd.DataFrame(np.array([coeflist,e_exp,p_value]),columns=feature_name_list)
+df_new.to_csv(os.path.join(input_dir, "file_name.csv"), sep=",")
