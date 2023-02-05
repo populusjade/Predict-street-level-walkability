@@ -1,0 +1,52 @@
+"""This file use pixellib to predict pixels of different objects in street images and store individual pixels into csv files"""
+
+
+import pixellib
+from pixellib.semantic import semantic_segmentation
+import tensorflow as tf
+import cv2
+import os
+from itertools import zip_longest
+import numpy as np
+import pandas as pd
+
+# 1. Set the path to import the images and where to store the segmented images
+image_fold_path= ("the path of your images")
+output_dir="the path you store the segmented iamges"
+
+
+# 2. created an instance of semantic segmentation class
+segment_image = semantic_segmentation()
+def segment_pre(img_input, img_output):
+    """This function take an image as input,return an dictionary includes predicted classes and their ratio_data"""
+
+    segvalues = segment_image.segmentAsAde20k(img_input, img_output, overlay=True)
+
+    # Obtain the ratio of segmentations in each predicted class
+    return segvalues[0]
+
+# 3. result from one image
+def ratios_value_one_img(segvalue, filename):
+    """This function take an dictonary as input, which has segment predition info.
+    retun a dataframe includes objects class as columns and class ratios as values"""
+    key_list = ["class_names", "ratios"]
+    filtered_segvalue = {item: segvalue.get(item) for item in key_list}
+    ratios_one_img = pd.DataFrame.from_dict(
+        filtered_segvalue, orient="index", columns=[segvalue["class_names"]]
+    )
+    ratios_one_img = ratios_one_img.drop("class_names").rename(
+        index={"ratios": "{}".format(filename)}
+    )
+    return ratios_one_img
+    
+#4.Store the 
+  for filename in os.listdir(image_fold_path):
+    inputname = os.path.join(image_fold_path, filename)
+    outputname = os.path.join(output_dir, filename)
+    output_csv = os.path.join(output_dir, filename + ".csv")
+    if os.path.exists(outputname):
+        print("'{}' already exists! Skipping.".format(outputname))
+    else:
+        segvalue = segment_pre(inputname, outputname)
+        df = ratios_value_one_img(segvalue, filename)
+        df.to_csv(output_csv, sep=",")
