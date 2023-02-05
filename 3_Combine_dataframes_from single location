@@ -1,0 +1,29 @@
+"""Combine the csv result from individual location to the same csv file"""
+
+import os
+from itertools import groupby
+import pandas as pd
+
+pre_dir="the path of predicted results from individual location"
+csv_files = sorted([f for f in os.listdir(pre_dir) if f.endswith(".jpg.csv")])
+
+result_rows = []
+result_csv_name = "result.csv"
+
+# Cut file names from last "_" and group by the beginning part
+for group_name, group in groupby(csv_files, lambda x: x.rsplit("_", 1)[0]):
+    dfs = []
+    for csv_path in group:
+        df = pd.read_csv(os.path.join(pre_dir, csv_path), header=0, index_col=0)
+        dfs.append(df)
+
+    if len(dfs) != 4:
+        print("Heading count not 4 for group '{}'!  Aborting!".format(group_name))
+        break
+    single = pd.concat(dfs).fillna(0).sum() / len(dfs)
+    single.rename(group_name, inplace=True)
+    single["LABEL"] = group_name.split("_")[0]
+    result_rows.append(single)
+
+result_df = pd.DataFrame(result_rows)
+result_df.to_csv(os.path.join(pre_dir, result_csv_name), sep=",")
