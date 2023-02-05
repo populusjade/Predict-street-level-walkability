@@ -1,0 +1,59 @@
+import pandas as pd
+import numpy as np 
+import matplotlib.pyplot as plt
+import os
+from sklearn.decomposition import PCA
+from sklearn.model_selection import GridSearchCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+import seaborn as sns
+
+input_dir="the path of your csv file with all predict classes"
+
+#1.load data
+data=pd.read_csv(input_dir,index_col=0).copy()
+X=data.iloc[:,1:-1]
+y=data.iloc[:,-1]
+#print("x shpae", X.shape)
+#print("y shape",y.shape)
+
+#2.scaler data
+scaler=StandardScaler()
+scaler.fit_transform(X)
+
+#3.split data to train and test
+X_train,X_rest,y_train,y_rest=train_test_split(X,y,test_size=0.2,shuffle=True,random_state=42)
+X_val,X_test,y_val,y_test=train_test_split(X_rest,y_rest,test_size=0.3,shuffle=True,random_state=42)
+
+#4.set params for logistic regression and use GridsearchCV to find best C
+params={"C":[10**-2,10**-1,10**0,10**1,10**2]}
+lr_model=LogisticRegression(penalty="l1",solver="liblinear",fit_intercept=True)
+gsv_model=GridSearchCV(estimator=lr_model,param_grid=params)
+gsv_model.fit(X_train,y_train)
+print("gsv best params C:",gsv_model.best_params_)
+
+#5.train a logistic regression model based on the selected hyperparameters from previous step
+model=LogisticRegression(**gsv_model.best_params_,penalty="l1",solver="liblinear",fit_intercept=True)
+model.fit(X_train,y_train)
+
+coef=model.coef_[0]
+
+#6.match the coef and feature names
+feature_name_list=[]
+for col in X.columns:
+    feature_name_list.append(col)
+
+feature_dict=dict(zip(feature_name_list,coef))
+
+#7.prepare dataset with important features 
+imp_features=pd.Series(X.columns)[list(coef!=0)]
+print("important features count:",sum(coef!=0))
+print("Redunddant feature count:",sum(coef==0))
+
+df_feature=data[imp_features]
+label=data.iloc[:,-1]
+df_feature["Label"]=label
+
+#8. save the csv file with reduced features
+df_feature.to_csv(os.path.join("new file name"), sep=",")
